@@ -5,10 +5,6 @@ import java.rmi.RemoteException;
 // IClientCallback is remoteInterface for the client. 
 // called by the server (stub on server side, impl on client side)
 public interface IClientCallback extends Remote {
-    // Join result, goes to the joining player
-    void onJoinDecision(boolean approved, String reason,
-                        String playerId, int colour, boolean isHost) throws RemoteException;
-
     // State pushes
     // onSnapshot is the server sending one client the entire current game state in a single call
     // The time it's called: 
@@ -24,7 +20,6 @@ public interface IClientCallback extends Remote {
 
     // Notifications
     void onRejected(String reason) throws RemoteException;
-    void onJoinApprovalRequest(String requestId, String name) throws RemoteException;
     // generic text notification to a client (e.g., "Player X left", "Round starting")
     void onInfo(String message) throws RemoteException;
     void onMatchClosed(String reason) throws RemoteException;
