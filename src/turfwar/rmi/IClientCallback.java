@@ -11,8 +11,12 @@ public interface IClientCallback extends Remote {
     // 1. right after a join is approved, so a mid-match joiner sees the existing board, players and timer
     // 2. at the start of a round, when the arena is reset
     // 3. as a resync if a client falls out of step
+
+    // Arena is sent as String[300] — null=neutral, "S"=scorched, playerId=owned (flat array, indexed col * 15 + row).
     void onSnapshot(String[] arena, PlayerData[] players, String phase,
                     int remaining, int[] allowances) throws RemoteException;
+    // Square changes are String[] where each element is "col:row:state"
+    // Square state: NEUTRAL, OWNED, SCORCHED
     void onSquaresChanged(String[] changes) throws RemoteException;
     void onPlayersChanged(PlayerData[] players) throws RemoteException;
     void onTimerUpdate(int remaining, String phase) throws RemoteException;
@@ -23,7 +27,7 @@ public interface IClientCallback extends Remote {
     // generic text notification to a client (e.g., "Player X left", "Round starting")
     void onInfo(String message) throws RemoteException;
     void onMatchClosed(String reason) throws RemoteException;
-    // tells the client how many pixels of each color they're allowed to paint
+    // Allowances are sent as int[4] = {lineUses, blockUses, wedgeUses, bombUses}
     void onAllowances(int[] allowances) throws RemoteException;
 
     // Heartbeat, Server -> client: every so often the server calls callback.ping() on each connected client.
