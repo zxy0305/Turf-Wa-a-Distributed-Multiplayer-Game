@@ -106,6 +106,41 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         }
     }
 
+
+    // respondToJoin is called by the host to answer a pending join request
+    // 1. take the joiner out of the waiting list
+    // 2. if the host approved: re-check that the match still has room and the name is still free
+    // 3. if the host denied: tell the joiner they were rejected
+    // the joiner always gets an onJoinDecision with the final result
+    @Override
+    public synchronized void respondToJoin(String requestId, boolean approve)
+            throws RemoteException {
+        PendingJoin pj = pendingJoins.remove(requestId);
+        if (pj == null) return;
+
+        if (approve) {
+            // re-check conditions
+            if (players.size() >= Config.COLOURS.length) {
+                safeCallback(() -> pj.callback.onJoinDecision(false, "Match is full",
+                    null, -1, false));
+                return;
+            }
+            for (ServerPlayer p : players.values()) {
+                if (p.name.equalsIgnoreCase(pj.name)) {
+                    safeCallback(() -> pj.callback.onJoinDecision(false, "Username existed",
+                        null, -1, false));
+                    return;
+                }
+            }
+            // approved 
+            admitPlayer(pj.name, false, pj.callback);
+        } else {
+            // host denied the request
+            safeCallback(() -> pj.callback.onJoinDecision(false,
+                "Host denied your request", null, -1, false));
+        }
+    }
+
     private void admitPlayer(String name, boolean isHost, IClientCallback callback) {
         // assign id, color
         String id = String.valueOf(nextPlayerId++);
@@ -131,8 +166,6 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
             if (!used[i]) return i;
         return 0;
     }
-
-
 
     // === Arena Actions ===
 
@@ -307,43 +340,6 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         ServerPlayer p = players.get(playerId);
         if (p != null) p.lastPongTime = System.currentTimeMillis();
     }
-
-
-
-    // respondToJoin is called by the host to answer a pending join request
-    // 1. take the joiner out of the waiting list
-    // 2. if the host approved: re-check that the match still has room and the name is still free
-    // 3. if the host denied: tell the joiner they were rejected
-    // the joiner always gets an onJoinDecision with the final result
-    @Override
-    public synchronized void respondToJoin(String requestId, boolean approve)
-            throws RemoteException {
-        PendingJoin pj = pendingJoins.remove(requestId);
-        if (pj == null) return;
-
-        if (approve) {
-            // re-check conditions
-            if (players.size() >= Config.COLOURS.length) {
-                safeCallback(() -> pj.callback.onJoinDecision(false, "Match is full",
-                    null, -1, false));
-                return;
-            }
-            for (ServerPlayer p : players.values()) {
-                if (p.name.equalsIgnoreCase(pj.name)) {
-                    safeCallback(() -> pj.callback.onJoinDecision(false, "Username existed",
-                        null, -1, false));
-                    return;
-                }
-            }
-            // approved 
-            admitPlayer(pj.name, false, pj.callback);
-        } else {
-            // host denied the request
-            safeCallback(() -> pj.callback.onJoinDecision(false,
-                "Host denied your request", null, -1, false));
-        }
-    }
-
 
 
     // === HeartBeats ===
