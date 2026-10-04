@@ -1,5 +1,8 @@
 package turfwar.server;
 
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+
 /**
  * Entry point of the server jar. This is a skeleton. Replace the body of main with your server.
  *
@@ -27,6 +30,24 @@ public final class ServerMain {
             System.exit(1);
         }
         // TODO (your work): start your server on this port.
-        System.out.println("Turf War server skeleton. Nothing is implemented yet. Port " + port + ".");
+        try {
+            // create the remote server object;
+            GameServerImpl server = new GameServerImpl();
+
+            // start an RMI registry inside this JVM on the given port,
+            // so that clients can look up to find the server
+            Registry registry = LocateRegistry.createRegistry(port);
+
+            // register the server under a name; clients call registry.lookup("TurfWarServer")
+            // rebind (not bind): creates registry if it doesn't exist, or replaces the existing binding
+            registry.rebind("TurfWarServer", server);
+            System.out.println("Turf War server running on port " + port);
+            Thread.currentThread().join(); // keep alive
+        } catch (Exception e) {
+            System.err.println("Server failed: " + e.getMessage());
+            System.exit(1);
+        }
+
+        // System.out.println("Turf War server skeleton. Nothing is implemented yet. Port " + port + ".");
     }
 }
