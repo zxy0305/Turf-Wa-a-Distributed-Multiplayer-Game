@@ -133,6 +133,183 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     }
 
 
+
+    // === Arena Actions ===
+
+    // Validation check about the phase, whether the square has been taken, scorched or out of arena
+    // change the state of arena square
+    // broadcast change and playerData
+    @Override
+    public synchronized void paint(String playerId, int col, int row) throws RemoteException {
+        ServerPlayer player = players.get(playerId);
+        if (player == null) return;
+        if (phase != Phase.RUNNING) {
+            safeCallback(() -> player.callback.onRejected("Round is not running"));
+            return;
+        }
+        if (!Geometry.inArena(col, row)) return;
+        Square sq = arena[col][row];
+        if (sq.isScorched() || sq.isOwnedBy(playerId)) return; // not an error
+
+        arena[col][row] = Square.ownedBy(playerId);
+        broadcastSquareChanges(new String[]{col + ":" + row + ":" + playerId});
+        // why broadcast players:
+        // painting a square changes the scores, and scores live in PlayerData.squares, not in the arena message
+        broadcastPlayers();
+    }
+
+    // usePowerUp: a player uses a Line, Block or Wedge power-up anchored at (col, row)
+    // 1. Validation check, include player, phase, correct tool 
+    // 2. update number of use
+    // 3. claim every square in the tool's shape
+    // 4. broadcast
+    @Override
+    public synchronized void usePowerUp(String playerId, String toolName, int col, int row)
+            throws RemoteException {
+        ServerPlayer player = players.get(playerId);
+        if (player == null) return;
+        if (phase != Phase.RUNNING) {
+            safeCallback(() -> player.callback.onRejected("Round is not running"));
+            return;
+        }
+        Tool tool;
+        try { tool = Tool.valueOf(toolName); } 
+        catch (Exception e) { return; }
+
+        if (!tool.isPowerUp()) return;
+
+        // check if any chance of usage of this tool is left
+        int uses = player.powerUpUses.getOrDefault(tool, 0);
+        if (uses <= 0) {
+            safeCallback(() -> player.callback.onRejected("No " + tool.label + " uses left"));
+            return;
+        }
+        // or deduct one chance
+        player.powerUpUses.put(tool, uses - 1);
+
+        // collect only the squares that actually change, encoded as "col:row:playerIDd"
+        List<String> changes = new ArrayList<>();
+        for (Point p : Geometry.squares(tool, col, row)) {
+            Square sq = arena[p.x][p.y];
+            if (!sq.isScorched() && !sq.isOwnedBy(playerId)) {
+                arena[p.x][p.y] = Square.ownedBy(playerId);
+                changes.add(p.x + ":" + p.y + ":" + playerId);
+            }
+        }
+        if (!changes.isEmpty()) {
+            broadcastSquareChanges(changes.toArray(new String[0]));
+            broadcastPlayers();
+        }
+        // send this player remaining uses
+        sendAllowances(player);
+    }
+
+    // a player drops their Bomb on the 3x3 area centred on (col, row)
+    // 1. validate: player exists, round is running, player still has a bomb
+    // 2. count how many squares would be scorched, and reject if that would beyond the arena's scorch capability
+    // 3. deduct the bomb and scorch every square in the area
+    // 4. broadcast
+    @Override
+    public synchronized void useBomb(String playerId, int col, int row) throws RemoteException {
+        ServerPlayer player = players.get(playerId);
+        if (player == null) return;
+        if (phase != Phase.RUNNING) {
+            safeCallback(() -> player.callback.onRejected("Round is not running"));
+            return;
+        }
+        if (player.bombRemaining <= 0) {
+            safeCallback(() -> player.callback.onRejected("No Bomb left"));
+            return;
+        }
+
+        // count how many squares would be scorched
+        List<Point> pts = Geometry.squares(Tool.BOMB, col, row);
+        int newScorched = 0;
+        for (Point p : pts) if (!arena[p.x][p.y].isScorched()) newScorched++;
+        // reject if that would beyond the arena's scorch capability
+        if (scorchCount + newScorched > Config.scorchCap()) {
+            safeCallback(() -> player.callback.onRejected("Arena too damaged so bomb is rejected"));
+            return;
+        }
+
+        // deduct the bomb
+        player.bombRemaining--;
+        // scorch every square in the area
+        List<String> changes = new ArrayList<>();
+        for (Point p : pts) {
+            if (!arena[p.x][p.y].isScorched()) {
+                arena[p.x][p.y] = Square.SCORCHED;
+
+                scorchCount++;
+
+                changes.add(p.x + ":" + p.y + ":S");
+            }
+        }
+
+        if (!changes.isEmpty()) {
+            broadcastSquareChanges(changes.toArray(new String[0]));
+            broadcastPlayers();
+        }
+        sendAllowances(player);
+    }
+
+
+    // === Match Control ===
+
+    // 1. validate: caller is the host, enough players, no round already in progress
+    // 2. reset the round state: clear the arena to neutral, reset the scorch count, refill power-ups
+    // 3. switch to RUNNING, reset the clock, send everyone a full snapshot, start the 1 second timer
+    @Override
+    public synchronized void startRound(String playerId) throws RemoteException {
+        // validate: caller is the host
+        ServerPlayer sender = players.get(playerId);
+        if (sender == null || !sender.isHost) {
+            if (sender != null)
+                safeCallback(() -> sender.callback.onRejected("Only the host can start"));
+            return;
+        }
+
+        if (players.size() < Config.MIN_PLAYERS) {
+            safeCallback(() -> sender.callback.onRejected(
+                "Need at least " + Config.MIN_PLAYERS + " players"));
+            return;
+        }
+        // no round already in progress
+        if (phase == Phase.RUNNING || phase == Phase.PAUSED) {
+            safeCallback(() -> sender.callback.onRejected("Round already in progress"));
+            return;
+        }
+
+        // reset arena
+        for (int c = 0; c < Config.COLS; c++)
+            for (int r = 0; r < Config.ROWS; r++)
+                arena[c][r] = Square.NEUTRAL;
+        scorchCount = 0;
+        // reset powerups
+        for (ServerPlayer p : players.values()) p.resetPowerUps();
+
+        phase = Phase.RUNNING;
+        remainingSeconds = roundLengthSeconds;
+        broadcastSnapshotToAll();
+        // start the 1 second timer
+        startTimerTask();
+    }
+
+    @Override
+    public synchronized void leave(String playerId) throws RemoteException {
+        // when removePlayer() is called inside leave(), it is also sychronized protected as leave() is holding the lock
+        removePlayer(playerId);
+    }
+
+    // Updates the player's last response time when a pong is received
+    @Override
+    public synchronized void pong(String playerId) throws RemoteException {
+        ServerPlayer p = players.get(playerId);
+        if (p != null) p.lastPongTime = System.currentTimeMillis();
+    }
+
+
+
     // respondToJoin is called by the host to answer a pending join request
     // 1. take the joiner out of the waiting list
     // 2. if the host approved: re-check that the match still has room and the name is still free
@@ -228,24 +405,54 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
 
     // === Timer ===
 
-    // private void startTimerTask() {
-    //     stopTimerTask();
-    //     timerTask = timer.scheduleAtFixedRate(() -> {
-    //         synchronized (GameServerImpl.this) { timerTick(); }
-    //     }, 1, 1, TimeUnit.SECONDS);
-    // }
+    private void startTimerTask() {
+        // stop any existing timer before starting a new one
+        stopTimerTask();
+        // run timerTick() every second to update the server's game clock
+        timerTask = timer.scheduleAtFixedRate(() -> {
+            // synchronize access to the game server state 
+            // reason to synchronize:
+            // ensure that only one thread can modify or access the shared game state at a time,
+            // preventing race conditions and keeping the server state consistent
+            synchronized (GameServerImpl.this) { timerTick(); }
+        }, 1, 1, TimeUnit.SECONDS);
+    }
 
     private void stopTimerTask() {
         if (timerTask != null) { timerTask.cancel(false); timerTask = null; }
     }
 
-    // private void timerTick() {
-    //         if (phase != Phase.RUNNING) return;
-    //         remainingSeconds--;
-    //         if (remainingSeconds < 0) remainingSeconds = 0;
-    //         broadcastTimer();
-    //         if (remainingSeconds <= 0) endRound();
-    //     }
+    // timerTick runs on timer thread
+    private void timerTick() {
+            if (phase != Phase.RUNNING) return;
+            remainingSeconds--;
+            if (remainingSeconds < 0) remainingSeconds = 0;
+            // send the updated remaining time to all clients
+            broadcastTimer();
+            // End the round when the timer reaches zero
+            if (remainingSeconds <= 0) endRound();
+        }
+
+    // Ends the round and broadcasts the final results to all players.
+    private void endRound() {
+        stopTimerTask();
+        // change the phase state to OVER
+        phase = Phase.OVER;
+        PlayerData[] standings = buildPlayerList();
+
+        // Sort players by the number of squares they own, highest first
+        Arrays.sort(standings, (a, b) -> b.squares - a.squares);
+
+        int max = standings.length > 0 ? standings[0].squares : 0;
+        List<PlayerData> winners = new ArrayList<>();
+        // Find all players with the highest score
+        for (PlayerData pd : standings) 
+            if (pd.squares == max) winners.add(pd);
+        PlayerData[] winnersArr = winners.toArray(new PlayerData[0]);
+        // Notify every player the round is over and send them the winners and final standings
+        for (ServerPlayer p : players.values())
+            safeCallback(() -> p.callback.onRoundOver(winnersArr, standings));
+    }
 
 
     // === Broadcast ===
@@ -267,6 +474,29 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
             safeCallback(() -> p.callback.onInfo(message));
     }
 
+    private void broadcastTimer() {
+        String ph = phase.name();
+        int rem = remainingSeconds;
+        for (ServerPlayer p : players.values())
+            safeCallback(() -> p.callback.onTimerUpdate(rem, ph));
+    }
+
+    // broadcastSnapshotToAll() sends the whole game state to every connected player, 
+    // while sendSnapshot(target) sends the whole game state only to one specific player,
+    // typically a newly joined player
+    private void broadcastSnapshotToAll() {
+        String[] enc = encodeArena();
+        PlayerData[] pl = buildPlayerList();
+        String ph = phase.name();
+        int rem = remainingSeconds;
+
+        for (ServerPlayer p : players.values()) {
+            // also send allowance
+            int[] allow = buildAllowances(p);
+            safeCallback(() -> p.callback.onSnapshot(enc, pl, ph, rem, allow));
+        }
+    }
+
 
     // sends the whole game state to one player (used after joining so they start with the correct board)
     private void sendSnapshot(ServerPlayer target) {
@@ -283,9 +513,12 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         safeCallback(() -> target.callback.onSnapshot(enc, pl, ph, rem, allow));
     }
 
+    private void sendAllowances(ServerPlayer player) {
+        int[] allow = buildAllowances(player);
+        safeCallback(() -> player.callback.onAllowances(allow));
+    }
 
-
-    // === Helpers ===
+    // === Data Built Helpers ===
 
     private String[] encodeArena() {
         String[] enc = new String[Config.COLS * Config.ROWS];
@@ -310,6 +543,22 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         return list;
     }
 
+    // reads whatever is in p.powerUpUses and p.bombRemaining at the moment it's called
+    // why int[]:
+    // int[] is the simplest and most compact thing to send over RMI
+    private int[] buildAllowances(ServerPlayer p) {
+        return new int[]{
+            p.powerUpUses.getOrDefault(Tool.LINE, 0),
+            p.powerUpUses.getOrDefault(Tool.BLOCK, 0),
+            p.powerUpUses.getOrDefault(Tool.WEDGE, 0),
+            p.bombRemaining
+        };
+    }
+
+
+
+    // === Other Helpers (Utility) ===
+
     // Count the number of squares belonged to specific playerId
     private int countSquares(String playerId) {
         int n = 0;
@@ -324,18 +573,6 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         for (ServerPlayer p : players.values()) if (p.isHost) return p;
         return null;
     }
-
-    // reads whatever is in p.powerUpUses and p.bombRemaining at the moment it's called
-    private int[] buildAllowances(ServerPlayer p) {
-        return new int[]{
-            p.powerUpUses.getOrDefault(Tool.LINE, 0),
-            p.powerUpUses.getOrDefault(Tool.BLOCK, 0),
-            p.powerUpUses.getOrDefault(Tool.WEDGE, 0),
-            p.bombRemaining
-        };
-    }
-
-
     // Wraps remote callback so a dead client doesn't crash the server
     // If the server tries to call a client, but that client has disconnected, 
     // the RemoteException is caught so the server doesn't crash.

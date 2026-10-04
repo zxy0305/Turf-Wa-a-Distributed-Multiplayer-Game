@@ -38,6 +38,7 @@ class ServerPlayer {
     // So the method is called:
     // 1. in the constructor, so a new player starts with full power-ups, and
     // 2. at the start of every round, for every player
+    // (bombs are NOT reset: they are once per match)
     void resetPowerUps() {
         powerUpUses.put(Tool.LINE, Config.POWERUP_USES);
 
