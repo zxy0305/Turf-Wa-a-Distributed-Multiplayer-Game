@@ -42,7 +42,10 @@ public final class ServerMain {
             // rebind (not bind): creates registry if it doesn't exist, or replaces the existing binding
             registry.rebind("TurfWarServer", server);
             System.out.println("Turf War server running on port " + port);
-            Thread.currentThread().join(); // keep alive
+
+            // Don't let the main server thread finish; 
+            // keep the server process alive so clients can continue connecting.
+            Thread.currentThread().join();
         } catch (Exception e) {
             System.err.println("Server failed: " + e.getMessage());
             System.exit(1);
