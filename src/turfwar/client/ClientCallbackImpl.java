@@ -18,6 +18,9 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
     private String myId;
     private IGameServer server;
 
+    private String username; // set in constructor
+    private ClientController controller; // set after construction
+
     public ClientCallbackImpl(GameView view) throws RemoteException {
         super(0);
         this.view = view;
@@ -25,15 +28,25 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
     
     public void setMyId(String id) { this.myId = id; }
     public void setServer(IGameServer server) { this.server = server; }
+    public void setUsername(String u) { this.username = u; }
+    public void setController(ClientController c) { this.controller = c; }
 
+    // handles the server's decision about whether this client is allowed to join the game
+    // onJoinDecision needs to call view.setLocalPlayer() 
+    // and feed the playerId back to ClientController
     @Override
     public void onJoinDecision(boolean approved, String reason,
-                               String playerId, int color, boolean isHost)
+                            String playerId, int color, boolean isHost)
             throws RemoteException {
         if (approved) {
             this.myId = playerId;
-            // view.setLocalPlayer is called when snapshot arrives
-            // (we store the info to use then)
+
+            // Pass the server-assigned ID to the controller
+            controller.setMyId(playerId);
+            controller.setHost(isHost);
+
+            // Update the UI with this client's player information
+            view.setLocalPlayer(new PlayerInfo(playerId, username, color, isHost, 0));
         } else {
             view.showMatchClosed("Join denied: " + reason);
         }

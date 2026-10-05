@@ -31,6 +31,8 @@ public class ClientController implements GameController {
         // create callback (exported as remote object)
         this.callback = new ClientCallbackImpl(view);
         callback.setServer(server);
+        callback.setUsername(username);
+        callback.setController(this);
 
         // send join request (on background thread to not block EDT(event dispatch thread))
         new Thread(() -> {
