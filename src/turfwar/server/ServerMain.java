@@ -1,5 +1,6 @@
 package turfwar.server;
 
+import java.net.InetAddress;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
@@ -31,6 +32,8 @@ public final class ServerMain {
         }
         // TODO (your work): start your server on this port.
         try {
+            System.setProperty("java.rmi.server.hostname",
+                InetAddress.getLocalHost().getHostAddress());
             // create the remote server object;
             GameServerImpl server = new GameServerImpl();
 

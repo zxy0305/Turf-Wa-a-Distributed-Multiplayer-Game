@@ -6,6 +6,7 @@ import turfwar.server.GameServerImpl;
 import turfwar.ui.MainWindow;
 import turfwar.ui.StartDialog;
 
+import java.net.InetAddress;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
@@ -42,6 +43,8 @@ public final class Main {
                 case HOST:
                     {
                     try {
+                        System.setProperty("java.rmi.server.hostname",
+                            InetAddress.getLocalHost().getHostAddress());
                         GameServerImpl server = new GameServerImpl();
                         Registry registry = LocateRegistry.createRegistry(opt.port);
                         registry.rebind("TurfWarServer", server);
