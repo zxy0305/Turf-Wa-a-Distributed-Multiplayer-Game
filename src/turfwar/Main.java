@@ -6,9 +6,10 @@ import turfwar.server.GameServerImpl;
 import turfwar.ui.MainWindow;
 import turfwar.ui.StartDialog;
 
-import java.net.InetAddress;
+import java.net.*;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
+import java.util.Enumeration;
 
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -43,8 +44,7 @@ public final class Main {
                 case HOST:
                     {
                     try {
-                        System.setProperty("java.rmi.server.hostname",
-                            InetAddress.getLocalHost().getHostAddress());
+                        System.setProperty("java.rmi.server.hostname", findLanAddress());
                         GameServerImpl server = new GameServerImpl();
                         Registry registry = LocateRegistry.createRegistry(opt.port);
                         registry.rebind("TurfWarServer", server);
@@ -97,20 +97,24 @@ public final class Main {
         });
     }
 
-
-    //                 JOptionPane.showMessageDialog(null,
-    //                     "Networking is not implemented yet.\nSee the TODO in turfwar.Main.",
-    //                     "Turf War", JOptionPane.INFORMATION_MESSAGE);
-    //                 System.exit(0);
-    //                 return;
-    //             default:
-    //                 throw new IllegalStateException();
-    //         }
-    //         window.setVisible(true);
-    //     });
-    // }
-
     private static int parsePort(String s) {
         try { return Integer.parseInt(s); } catch (NumberFormatException e) { return -1; }
+    }
+
+    private static String findLanAddress() {
+        try {
+            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+            while (ifaces.hasMoreElements()) {
+                NetworkInterface iface = ifaces.nextElement();
+                if (iface.isLoopback() || !iface.isUp()) continue;
+                Enumeration<InetAddress> addrs = iface.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress())
+                        return addr.getHostAddress();
+                }
+            }
+        } catch (SocketException ignored) {}
+        return "127.0.0.1";
     }
 }

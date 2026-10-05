@@ -1,8 +1,9 @@
 package turfwar.server;
 
-import java.net.InetAddress;
+import java.net.*;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
+import java.util.Enumeration;
 
 /**
  * Entry point of the server jar. This is a skeleton. Replace the body of main with your server.
@@ -32,8 +33,7 @@ public final class ServerMain {
         }
         // TODO (your work): start your server on this port.
         try {
-            System.setProperty("java.rmi.server.hostname",
-                InetAddress.getLocalHost().getHostAddress());
+            System.setProperty("java.rmi.server.hostname", findLanAddress());
             // create the remote server object;
             GameServerImpl server = new GameServerImpl();
 
@@ -55,5 +55,22 @@ public final class ServerMain {
         }
 
         // System.out.println("Turf War server skeleton. Nothing is implemented yet. Port " + port + ".");
+    }
+
+    private static String findLanAddress() {
+        try {
+            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+            while (ifaces.hasMoreElements()) {
+                NetworkInterface iface = ifaces.nextElement();
+                if (iface.isLoopback() || !iface.isUp()) continue;
+                Enumeration<InetAddress> addrs = iface.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress())
+                        return addr.getHostAddress();
+                }
+            }
+        } catch (SocketException ignored) {}
+        return "127.0.0.1";
     }
 }
