@@ -85,9 +85,29 @@ public class ClientController implements GameController {
         async(() -> { try { server.respondToJoin(requestId, approve); } catch (RemoteException e) { throw new RuntimeException(e); } });
     }
 
+    // Problem: System.exit(0) runs right after the leave thread starts, 
+    // so the JVM may exit before server.leave(myId) is sent.
+    // The server would then only notice the player is gone when its next callback to that client fails
+
+    // @Override
+    // public void leave() {
+    //     async(() -> { try { server.leave(myId); } catch (RemoteException ignored) {} });
+    //     System.exit(0);
+    // }
+
     @Override
     public void leave() {
-        async(() -> { try { server.leave(myId); } catch (RemoteException ignored) {} });
+        Thread t = new Thread(() -> {
+            try { server.leave(myId); } catch (RemoteException ignored) {}
+        });
+        t.start();
+        try {
+            // give the leave call a moment to reach the server before exiting
+            // and 1000 timeout avoid t blocking forever if RMI call hangs
+            t.join(1000);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
         System.exit(0);
     }
 
