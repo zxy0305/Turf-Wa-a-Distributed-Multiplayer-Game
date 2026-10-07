@@ -135,6 +135,12 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
         view.setAllowances(toToolMap(allowances));
     }
 
+    // show a taunt with the sender's name and color
+    @Override
+    public void onTaunt(PlayerData from, String text) throws RemoteException {
+        view.showTaunt(new PlayerInfo(from.id, from.name, from.colorIndex, from.host, from.squares), text);
+    }
+
     // client-side response to the server's heartbeat ping()
     @Override
     public void ping() throws RemoteException {

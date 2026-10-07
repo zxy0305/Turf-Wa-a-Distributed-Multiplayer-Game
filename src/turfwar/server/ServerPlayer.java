@@ -22,6 +22,8 @@ class ServerPlayer {
     // lastPongTime is the last time the server heard from this player
     // The server uses it to detect clients have crashed or disconnected without calling leave()
     long lastPongTime;
+    // time of the last accepted taunt, used for the 1 taunt / 2 s limit
+    long lastTauntTime;
 
     ServerPlayer(String id, String name, int colorIndex, boolean isHost,
                  IClientCallback callback) {

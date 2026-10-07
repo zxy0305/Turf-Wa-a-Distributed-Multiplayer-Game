@@ -41,6 +41,8 @@ public interface IClientCallback extends Remote {
     void onMatchClosed(String reason) throws RemoteException;
     // Allowances are sent as int[4] = {lineUses, blockUses, wedgeUses, bombUses}
     void onAllowances(int[] allowances) throws RemoteException;
+    // a taunt from player fromPlayer, broadcast to everyone
+    void onTaunt(PlayerData fromPlayer, String text) throws RemoteException;
 
     // === Heatbeat ===
 

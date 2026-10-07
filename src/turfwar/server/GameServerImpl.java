@@ -37,6 +37,15 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     // stores the reference to the scheduled task that I created
     private ScheduledFuture<?> timerTask;
 
+    // true if arena actions are allowed (game is running); 
+    // otherwise tells the player why not
+    private boolean isRunning(ServerPlayer p) {
+        if (phase == Phase.RUNNING) return true;
+        String msg = phase == Phase.PAUSED ? "Round is paused" : "Round is not running";
+        safeCallback(() -> p.callback.onRejected(msg));
+        return false;
+    }
+
 
     // Initialize
     public GameServerImpl() throws RemoteException {
@@ -176,10 +185,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     public synchronized void paint(String playerId, int col, int row) throws RemoteException {
         ServerPlayer player = players.get(playerId);
         if (player == null) return;
-        if (phase != Phase.RUNNING) {
-            safeCallback(() -> player.callback.onRejected("Round is not running"));
-            return;
-        }
+        if (!isRunning(player)) return;
         if (!Geometry.inArena(col, row)) return;
         Square sq = arena[col][row];
         if (sq.isScorched() || sq.isOwnedBy(playerId)) return; // not an error
@@ -201,10 +207,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
             throws RemoteException {
         ServerPlayer player = players.get(playerId);
         if (player == null) return;
-        if (phase != Phase.RUNNING) {
-            safeCallback(() -> player.callback.onRejected("Round is not running"));
-            return;
-        }
+        if (!isRunning(player)) return;
         Tool tool;
         try { tool = Tool.valueOf(toolName); } 
         catch (Exception e) { return; }
@@ -246,10 +249,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     public synchronized void useBomb(String playerId, int col, int row) throws RemoteException {
         ServerPlayer player = players.get(playerId);
         if (player == null) return;
-        if (phase != Phase.RUNNING) {
-            safeCallback(() -> player.callback.onRejected("Round is not running"));
-            return;
-        }
+        if (!isRunning(player)) return;
         if (player.bombRemaining <= 0) {
             safeCallback(() -> player.callback.onRejected("No Bomb left"));
             return;
@@ -334,6 +334,84 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         removePlayer(playerId);
     }
 
+    // accepted only while RUNNING or PAUSED, max one per player every TAUNT_MIN_INTERVAL_MS
+    @Override
+    public synchronized void sendTaunt(String playerId, int index) throws RemoteException {
+        ServerPlayer p = players.get(playerId);
+        if (p == null || index < 0 || index >= Config.TAUNTS.length) return;
+        if (phase != Phase.RUNNING && phase != Phase.PAUSED) {
+            safeCallback(() -> p.callback.onRejected("Taunts only work during a round"));
+            return;
+        }
+        // max one per player every TAUNT_MIN_INTERVAL_MS
+        long now = System.currentTimeMillis();
+        if (now - p.lastTauntTime < Config.TAUNT_MIN_INTERVAL_MS) {
+            safeCallback(() -> p.callback.onRejected("Taunt dropped: one every 2 seconds"));
+            return;
+        }
+
+        // if all validation checks pass, send Taunt to every player
+        p.lastTauntTime = now;
+        String text = Config.TAUNTS[index];
+        PlayerData from = new PlayerData(p.id, p.name, p.colorIndex, p.isHost, countSquares(p.id));
+        for (ServerPlayer q : players.values())
+            safeCallback(() -> q.callback.onTaunt(from, text));
+    }
+
+    // pausing cancels the timer and freezes the round clock; 
+    // resuming restarts both
+    @Override
+    public synchronized void pauseOrResume(String playerId) throws RemoteException {
+        ServerPlayer p = players.get(playerId);
+        if (p == null) return;
+        // only host can pause
+        if (!p.isHost) {
+            safeCallback(() -> p.callback.onRejected("Only the host can pause or resume"));
+            return;
+        }
+        // if the phase is running, pause is enabled
+        if (phase == Phase.RUNNING) {
+            stopTimerTask();
+            phase = Phase.PAUSED;
+            broadcastTimer();
+            broadcastInfo("Round paused by the host");
+        }
+        // if the phase is paused, running is enabled (resume)
+        else if (phase == Phase.PAUSED) {
+            phase = Phase.RUNNING;
+            startTimerTask();
+            broadcastTimer();
+            broadcastInfo("Round resumed");
+        } else {
+            safeCallback(() -> p.callback.onRejected("No round is running"));
+        }
+    }
+
+    @Override
+    public synchronized void kick(String hostId, String targetId) throws RemoteException {
+        ServerPlayer host = players.get(hostId);
+
+        if (host == null) return;
+        // only host can kick player
+        if (!host.isHost) {
+            safeCallback(() -> host.callback.onRejected("Only the host can kick players"));
+            return;
+        }
+        ServerPlayer target = players.get(targetId);
+        if (target == null) {
+            safeCallback(() -> host.callback.onRejected("That player is no longer in the match"));
+            return;
+        }
+        if (target.isHost) {
+            safeCallback(() -> host.callback.onRejected("The host cannot kick themselves"));
+            return;
+        }
+        // tell the target first
+        safeCallback(() -> target.callback.onMatchClosed("You were removed by the host"));
+        // then remove: removePlayer drops their callback from the broadcast set
+        removePlayer(targetId);
+    }
+
     // Updates the player's last response time when a pong is received
     @Override
     public synchronized void pong(String playerId) throws RemoteException {
@@ -393,7 +471,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
             broadcastSquareChanges(changes.toArray(new String[0]));
 
         broadcastPlayers();
-        
+
         broadcastInfo(player.name + " left");
     }
 

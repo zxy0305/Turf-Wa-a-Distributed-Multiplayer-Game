@@ -19,4 +19,12 @@ public interface IGameServer extends Remote {
 
     // Client -> server: the client answers by calling server.pong(playerId), which tells the server it's still alive.
     void pong(String playerId) throws RemoteException;
+
+    // === Advanced features ===
+    // A1: taunt index(Config.TAUNTS)
+    void sendTaunt(String playerId, int index) throws RemoteException;
+    // A2: host only
+    void pauseOrResume(String playerId) throws RemoteException;
+    // A3: host only, removes another player
+    void kick(String hostId, String targetId) throws RemoteException;
 }

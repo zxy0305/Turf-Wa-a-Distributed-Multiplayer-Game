@@ -111,21 +111,21 @@ public class ClientController implements GameController {
         System.exit(0);
     }
 
-    // TODO
     @Override
     public void sendTaunt(int tauntIndex) {
-        // stub for now — advanced feature
+        async(() -> { try { server.sendTaunt(myId, tauntIndex); } catch (RemoteException e) { throw new RuntimeException(e); } });
     }
 
     @Override
     public void pauseOrResume() {
-        // stub — advanced feature
+        async(() -> { try { server.pauseOrResume(myId); } catch (RemoteException e) { throw new RuntimeException(e); } });
     }
 
     @Override
     public void kick(String playerId) {
-        // stub — advanced feature
+        async(() -> { try { server.kick(myId, playerId); } catch (RemoteException e) { throw new RuntimeException(e); } });
     }
+
     @Override public void replayLastRound() { view.showInfo("Not implemented"); }
     @Override public void saveReplay(File file) { view.showInfo("Not implemented"); }
     @Override public void openReplay(File file) { view.showInfo("Not implemented"); }
