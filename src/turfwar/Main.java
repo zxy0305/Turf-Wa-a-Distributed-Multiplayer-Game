@@ -74,29 +74,46 @@ public final class Main {
                 }
                 // Connect to an existing server as a non-host player
                 case JOIN:
-                    {
-                    try {
-                        // the server calls back into this client, so advertise our LAN address, not whatever the OS hostname resolves to
-                        System.setProperty("java.rmi.server.hostname", findLanAddress());
-                        // Connect to the remote server using its address and port
-                        ClientController ctrl = new ClientController(
-                            opt.serverAddress, opt.port, opt.username, 0, window);
-
-                        // Connect the GUI window to the client-side controller
-                        window.setController(ctrl);
-                    } catch (Exception e) {
-                        JOptionPane.showMessageDialog(null,
-                            "Could not connect to " + opt.serverAddress + ":" + opt.port
-                                + ":\n" + e.getMessage(),
-                            "Error", JOptionPane.ERROR_MESSAGE);
-                        System.exit(1); return;
-                    }
+                    joinFlow(window, opt.serverAddress, opt.port, opt.username, false);
                     break;
-                }
                 default: throw new IllegalStateException();
             }
             window.setVisible(true);
         });
+    }
+
+    // Connects as a non-host player. If the server rejects the username, the start dialog is shown again
+    // (instead of exiting) so the user can try another name.
+    private static void joinFlow(MainWindow window, String address, int port, String name, boolean retrying) {
+        try {
+            // the server calls back into this client, so advertise our LAN address, not whatever the OS hostname resolves to
+            System.setProperty("java.rmi.server.hostname", findLanAddress());
+            ClientController ctrl = new ClientController(address, port, name, 0, window,
+                msg -> SwingUtilities.invokeLater(() -> retryJoin(window, address, port, name, msg)));
+            window.setController(ctrl);
+        } catch (Exception e) {
+            String msg = "Could not connect to " + address + ":" + port + ":\n" + e.getMessage();
+            if (retrying) { retryJoin(window, address, port, name, msg); return; }
+            JOptionPane.showMessageDialog(null, msg, "Error", JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
+        }
+    }
+
+    private static void retryJoin(MainWindow window, String address, int port, String name, String message) {
+        JOptionPane.showMessageDialog(window, message, "Cannot join", JOptionPane.WARNING_MESSAGE);
+        String addr = address, user = name;
+        int prt = port;
+        while (true) {
+            StartDialog.Options opt = new StartDialog(addr, prt, user).showAndGet();
+            if (opt == null) System.exit(0);
+            if (opt.mode == StartDialog.Mode.JOIN) {
+                joinFlow(window, opt.serverAddress, opt.port, opt.username, true);
+                return;
+            }
+            JOptionPane.showMessageDialog(window, "Choose \"Join a match\" to try again.",
+                "Cannot join", JOptionPane.INFORMATION_MESSAGE);
+            addr = opt.serverAddress; prt = opt.port; user = opt.username;
+        }
     }
 
     private static int parsePort(String s) {

@@ -61,7 +61,12 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
             // Update the UI with this client's player information
             view.setLocalPlayer(new PlayerInfo(playerId, username, color, isHost, 0));
         } else {
-            view.showMatchClosed("Join denied: " + reason);
+            // system doesn't exit
+            if (reason != null && reason.startsWith(NAME_REJECTED))
+                controller.nameRejected(reason.substring(NAME_REJECTED.length()));
+            else
+                // if it's not due to name rejection, such as reaching capability or denied by the host, exit
+                view.showMatchClosed("Join denied: " + reason);
         }
     }
 

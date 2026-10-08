@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 import java.rmi.RemoteException;
+import java.rmi.server.UnicastRemoteObject;
+import java.util.function.Consumer;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
@@ -25,10 +27,19 @@ public class ClientController implements GameController {
     private final ClientCallbackImpl callback;
     private String myId;
     private boolean isHost;
+    // called when the server rejects the username, so the user can try another one
+    private final Consumer<String> onNameRejected;
 
     public ClientController(String host, int port, String username,
                             int roundSeconds, GameView view) throws Exception {
+        this(host, port, username, roundSeconds, view, null);
+    }
+
+    public ClientController(String host, int port, String username,
+                            int roundSeconds, GameView view,
+                            Consumer<String> onNameRejected) throws Exception {
         this.view = view;
+        this.onNameRejected = onNameRejected;
 
         // look up server in RMI registry
         Registry registry = LocateRegistry.getRegistry(host, port);
@@ -48,6 +59,19 @@ public class ClientController implements GameController {
                 view.showMatchClosed("Could not connect: " + e.getMessage());
             }
         }).start();
+    }
+
+    // called by the callback when the server rejects the username
+    void nameRejected(String message) {
+        dispose();
+        if (onNameRejected != null) onNameRejected.accept(message);
+        else view.showMatchClosed("Join denied: " + message);
+    }
+
+    // stops receiving callbacks
+    private void dispose() {
+        try { UnicastRemoteObject.unexportObject(callback, true); } 
+        catch (Exception ignored) {}
     }
 
     // called by the callback after join is approved

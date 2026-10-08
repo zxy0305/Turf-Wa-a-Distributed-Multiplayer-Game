@@ -81,7 +81,8 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
                                           IClientCallback callback) throws RemoteException {
         // validate name
         if (!Config.validName(name)) {
-            callback.onJoinDecision(false, "Invalid username", null, -1, false);
+            callback.onJoinDecision(false, IClientCallback.NAME_REJECTED
+                + "Invalid username (1-16 letters, digits or underscore)", null, -1, false);
             return;
         }
         // check full
@@ -92,16 +93,16 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         // check name duplicate
         for (ServerPlayer p : players.values()) {
             if (p.name.equalsIgnoreCase(name)) {
-                callback.onJoinDecision(false,
-                    "Username '" + name + "' is existed", null, -1, false);
+                callback.onJoinDecision(false, IClientCallback.NAME_REJECTED
+                    + "Username '" + name + "' is already taken", null, -1, false);
                 return;
             }
         }
         // check pending name duplicate
         for (PendingJoin pj : pendingJoins.values()) {
             if (pj.name.equalsIgnoreCase(name)) {
-                callback.onJoinDecision(false,
-                    "Username '" + name + "' is already pending", null, -1, false);
+                callback.onJoinDecision(false, IClientCallback.NAME_REJECTED
+                    + "Username '" + name + "' is already taken", null, -1, false);
                 return;
             }
         }
@@ -148,7 +149,8 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
             }
             for (ServerPlayer p : players.values()) {
                 if (p.name.equalsIgnoreCase(pj.name)) {
-                    safeCallback(() -> pj.callback.onJoinDecision(false, "Username existed",
+                    safeCallback(() -> pj.callback.onJoinDecision(false,
+                        IClientCallback.NAME_REJECTED + "Username '" + pj.name + "' is already taken",
                         null, -1, false));
                     return;
                 }

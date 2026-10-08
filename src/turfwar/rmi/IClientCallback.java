@@ -6,6 +6,9 @@ import java.rmi.RemoteException;
 // called by the server (stub on server side, impl on client side)
 public interface IClientCallback extends Remote {
 
+    // Prefix of a join rejection reason that the user can fix by choosing another name
+    String NAME_REJECTED = "NAME_REJECTED: ";
+
     // === Request ===
     // Join result — server tells client whether they can join the game
     void onJoinDecision(boolean approved, String reason,
