@@ -37,6 +37,18 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     // stores the reference to the scheduled task that I created
     private ScheduledFuture<?> timerTask;
 
+    // round clock in ms that excludes paused time (replay timestamps)
+    // clockAccumMs is the total ms the round has been running over all running segments
+    // clockAccumMs is not a ticking counter. Nothing increments it every second
+    private long clockAccumMs;
+    // record when the current running segment began
+    private long clockRunSince;
+    private final ReplayLog replay = new ReplayLog();
+
+    private long roundClockMs() {
+        return clockAccumMs + (phase == Phase.RUNNING ? System.currentTimeMillis() - clockRunSince : 0);
+    }
+
     // true if arena actions are allowed (game is running); 
     // otherwise tells the player why not
     private boolean isRunning(ServerPlayer p) {
@@ -156,6 +168,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         int color = nextFreeColor();
         ServerPlayer player = new ServerPlayer(id, name, color, isHost, callback);
         players.put(id, player);
+        replay.join(roundClockMs(), player);
 
         safeCallback(() -> callback.onJoinDecision(true, null, id, color, isHost));
         // send snapshot to the player who is just got approved to join the game
@@ -323,6 +336,12 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
 
         phase = Phase.RUNNING;
         remainingSeconds = roundLengthSeconds;
+
+        // start to record the game
+        clockAccumMs = 0;
+        clockRunSince = System.currentTimeMillis();
+        replay.begin(players.values());
+
         broadcastSnapshotToAll();
         // start the 1 second timer
         startTimerTask();
@@ -369,8 +388,11 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
             safeCallback(() -> p.callback.onRejected("Only the host can pause or resume"));
             return;
         }
+        
+        long now = System.currentTimeMillis();
         // if the phase is running, pause is enabled
         if (phase == Phase.RUNNING) {
+            clockAccumMs += now - clockRunSince;
             stopTimerTask();
             phase = Phase.PAUSED;
             broadcastTimer();
@@ -378,6 +400,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         }
         // if the phase is paused, running is enabled (resume)
         else if (phase == Phase.PAUSED) {
+            clockRunSince = now;
             phase = Phase.RUNNING;
             startTimerTask();
             broadcastTimer();
@@ -385,6 +408,15 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
         } else {
             safeCallback(() -> p.callback.onRejected("No round is running"));
         }
+    }
+
+    // A4: only the host may fetch the frozen log of the last finished round
+    @Override
+    public synchronized String[] getReplay(String playerId) throws RemoteException {
+        ServerPlayer p = players.get(playerId);
+        // only the host
+        if (p == null || !p.isHost) return null;
+        return replay.last();
     }
 
     @Override
@@ -469,6 +501,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
 
         if (!changes.isEmpty())
             broadcastSquareChanges(changes.toArray(new String[0]));
+        replay.leave(roundClockMs(), playerId);
 
         broadcastPlayers();
 
@@ -510,6 +543,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     // Ends the round and broadcasts the final results to all players.
     private void endRound() {
         stopTimerTask();
+        replay.finish(roundLengthSeconds * 1000L);
         // change the phase state to OVER
         phase = Phase.OVER;
         PlayerData[] standings = buildPlayerList();
@@ -532,6 +566,7 @@ public class GameServerImpl extends UnicastRemoteObject implements IGameServer {
     // === Broadcast ===
 
     private void broadcastSquareChanges(String[] changes) {
+        replay.squares(roundClockMs(), changes);
         for (ServerPlayer p : players.values())
             safeCallback(() -> p.callback.onSquaresChanged(changes));
     }

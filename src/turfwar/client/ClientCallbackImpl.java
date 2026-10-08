@@ -12,6 +12,9 @@ import java.util.*;
 // receives server pushes, calls GameView
 // one ClientCallbackImpl object per client program, each client program is a player
 // Each player's callback is their own private "mailbox" that the server delivers to
+
+// During replay, prevent real-time server updates from overwriting the playback screen, 
+// while ensuring that the system returns to the latest state once playback ends.
 public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCallback {
 
     private final GameView view;
@@ -20,6 +23,16 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
 
     private String username; // set in constructor
     private ClientController controller; // set after construction
+
+    // Mirror of the live server state. It is always updated, but only pushed to the window
+    // while no replay is on screen, so live updates never overwrite a replay.
+    private final Object stateLock = new Object();
+    private Square[][] liveGrid = neutralGrid();
+    private Phase livePhase = Phase.LOBBY;
+    private int liveRemaining;
+    private List<PlayerInfo> livePlayers = new ArrayList<>();
+    private Map<Tool, Integer> liveAllow = new EnumMap<>(Tool.class);
+    private ReplayPlayer replay; // non-null while a replay is playing
 
     public ClientCallbackImpl(GameView view) throws RemoteException {
         super(0);
@@ -66,13 +79,15 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
                 else grid[c][r] = Square.ownedBy(s);
             }
 
-        view.setArena(grid);
-        // convert input into the format that GameView accepts
-        view.setPlayers(toPlayerInfoList(players));
-        view.setPhase(Phase.valueOf(phase));
-        view.setRemainingSeconds(remaining);
-        // convert input into the format that GameView accepts
-        view.setAllowances(toToolMap(allowances));
+        synchronized (stateLock) {
+            // store changed data into live mirror
+            liveGrid = grid;
+            livePlayers = toPlayerInfoList(players);
+            livePhase = Phase.valueOf(phase);
+            liveRemaining = remaining;
+            liveAllow = toToolMap(allowances);
+            if (replay == null) pushLive();
+        }
     }
 
     // the server sends only the squares that just changed, not the whole board
@@ -88,24 +103,39 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
             if ("N".equals(state)) sq = Square.NEUTRAL;
             else if ("S".equals(state)) sq = Square.SCORCHED;
             else sq = Square.ownedBy(state);
-            view.setSquare(c, r, sq);
+            synchronized (stateLock) {
+                liveGrid[c][r] = sq;
+                if (replay == null) view.setSquare(c, r, sq);
+            }
         }
     }
     @Override
     public void onPlayersChanged(PlayerData[] players) throws RemoteException {
-        view.setPlayers(toPlayerInfoList(players));
+        synchronized (stateLock) {
+            livePlayers = toPlayerInfoList(players);
+            if (replay == null) view.setPlayers(livePlayers);
+        }
     }
 
     @Override
     public void onTimerUpdate(int remaining, String phase) throws RemoteException {
-        view.setRemainingSeconds(remaining);
-        if (phase != null) view.setPhase(Phase.valueOf(phase));
+        synchronized (stateLock) {
+            liveRemaining = remaining;
+            if (phase != null) livePhase = Phase.valueOf(phase);
+            if (replay == null) {
+                view.setRemainingSeconds(remaining);
+                if (phase != null) view.setPhase(livePhase);
+            }
+        }
     }
 
     @Override
     public void onRoundOver(PlayerData[] winners, PlayerData[] standings)
             throws RemoteException {
-        view.showRoundOver(toPlayerInfoList(winners), toPlayerInfoList(standings));
+        synchronized (stateLock) {
+            livePhase = Phase.OVER;
+            if (replay == null) view.showRoundOver(toPlayerInfoList(winners), toPlayerInfoList(standings));
+        }
     }
 
     @Override
@@ -127,12 +157,56 @@ public class ClientCallbackImpl extends UnicastRemoteObject implements IClientCa
 
     @Override
     public void onMatchClosed(String reason) throws RemoteException {
+        synchronized (stateLock) {
+            if (replay != null) replay.cancel();
+        }
         view.showMatchClosed(reason);
     }
 
     @Override
     public void onAllowances(int[] allowances) throws RemoteException {
-        view.setAllowances(toToolMap(allowances));
+        synchronized (stateLock) {
+            liveAllow = toToolMap(allowances);
+            if (replay == null) view.setAllowances(liveAllow);
+        }
+    }
+
+    // === Replay support (A4) ===
+
+    public Phase livePhase() { synchronized (stateLock) { return livePhase; } }
+    public boolean isReplaying() { synchronized (stateLock) { return replay != null; } }
+    // Starting now, real-time push notifications will no longer be displayed on the screen
+    // as replay starts 
+    public void beginReplay(ReplayPlayer r) { synchronized (stateLock) { replay = r; } }
+
+
+    // runs r only while a replay is still on screen
+    void whileReplaying(Runnable r) {
+        synchronized (stateLock) { if (replay != null) r.run(); }
+    }
+
+    // replay finished: return to the current server state
+    void endReplay(boolean restoreLive) {
+        synchronized (stateLock) {
+            replay = null;
+            // If replay completes normally, call pushLive() to resume
+            if (restoreLive) pushLive();
+        }
+    }
+
+    
+    private void pushLive() {
+        view.setArena(liveGrid);
+        view.setPlayers(livePlayers);
+        view.setPhase(livePhase);
+        view.setRemainingSeconds(liveRemaining);
+        if (!liveAllow.isEmpty()) view.setAllowances(liveAllow);
+    }
+
+    private static Square[][] neutralGrid() {
+        Square[][] g = new Square[Config.COLS][Config.ROWS];
+        for (Square[] col : g) Arrays.fill(col, Square.NEUTRAL);
+        return g;
     }
 
     // show a taunt with the sender's name and color

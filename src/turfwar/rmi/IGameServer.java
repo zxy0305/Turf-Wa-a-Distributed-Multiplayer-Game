@@ -27,4 +27,6 @@ public interface IGameServer extends Remote {
     void pauseOrResume(String playerId) throws RemoteException;
     // A3: host only, removes another player
     void kick(String hostId, String targetId) throws RemoteException;
+    // A4: host only: frozen log of the last finished round
+    String[] getReplay(String playerId) throws RemoteException;
 }

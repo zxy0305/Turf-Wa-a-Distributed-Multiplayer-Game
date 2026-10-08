@@ -2,11 +2,17 @@ package turfwar.client;
 
 import turfwar.api.GameController;
 import turfwar.api.GameView;
+import turfwar.model.Phase;
 import turfwar.model.PlayerInfo;
 import turfwar.model.Tool;
 import turfwar.rmi.IGameServer;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.List;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -77,6 +83,7 @@ public class ClientController implements GameController {
 
     @Override
     public void startRound() {
+        if (callback.isReplaying()) { view.showError("Wait for the replay to finish"); return; }
         async(() -> { try { server.startRound(myId); } catch (RemoteException e) { throw new RuntimeException(e); } });
     }
 
@@ -126,7 +133,81 @@ public class ClientController implements GameController {
         async(() -> { try { server.kick(myId, playerId); } catch (RemoteException e) { throw new RuntimeException(e); } });
     }
 
-    @Override public void replayLastRound() { view.showInfo("Not implemented"); }
-    @Override public void saveReplay(File file) { view.showInfo("Not implemented"); }
-    @Override public void openReplay(File file) { view.showInfo("Not implemented"); }
+    // === A4: Replay (host only). The log lives on the server; replay is local to the host's window ===
+
+    @Override
+    public void replayLastRound() {
+        if (!canUseReplay()) return;
+        async(() -> {
+            String[] log = fetchReplay();
+            if (log != null) play(Arrays.asList(log));
+        });
+    }
+
+    @Override
+    public void saveReplay(File file) {
+        if (!isHost) { view.showError("Only the host can use replays"); return; }
+        async(() -> {
+            String[] log = fetchReplay();
+            if (log == null) return;
+            try {
+                // Save the replay log as a UTF-8 text file
+                Files.write(file.toPath(), Arrays.asList(log), StandardCharsets.UTF_8);
+                view.showInfo("Replay saved to " + file.getName());
+            } catch (IOException e) {
+                view.showError("Could not save replay: " + e.getMessage());
+            }
+        });
+    }
+
+    @Override
+    public void openReplay(File file) {
+        if (!canUseReplay()) return;
+        async(() -> {
+            try {
+                play(Files.readAllLines(file.toPath(), StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                view.showError("Could not open replay: " + e.getMessage());
+            }
+        });
+    }
+
+    private boolean canUseReplay() {
+        // Only the host can use replay
+        if (!isHost) { view.showError("Only the host can use replays"); return false; }
+        // Prevent starting another replay while one is already playing
+        if (callback.isReplaying()) { view.showError("A replay is already playing"); return false; }
+        // Replays are only allowed in LOBBY or OVER phase
+        Phase ph = callback.livePhase();
+        if (ph != Phase.LOBBY && ph != Phase.OVER) {
+            view.showError("Replays are only available in the lobby or after a round");
+            return false;
+        }
+        return true;
+    }
+
+    private String[] fetchReplay() {
+        try {
+            // Request the replay log from the server using RMI
+            String[] log = server.getReplay(myId);
+            if (log == null) view.showError("No finished round to replay yet");
+            return log;
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void play(List<String> lines) {
+        try {
+            ReplayPlayer rp = ReplayPlayer.parse(lines, view, callback);
+            // Tell the client callback that a replay has started
+            callback.beginReplay(rp);
+
+            // ReplayPlayer implements Runnable, so run it on a separate thread.
+            // This keeps replay independent from the Swing event thread
+            new Thread(rp, "replay").start();
+        } catch (IllegalArgumentException e) {
+            view.showError("Invalid replay file: " + e.getMessage());
+        }
+    }
 }
