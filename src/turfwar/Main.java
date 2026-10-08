@@ -76,6 +76,8 @@ public final class Main {
                 case JOIN:
                     {
                     try {
+                        // the server calls back into this client, so advertise our LAN address, not whatever the OS hostname resolves to
+                        System.setProperty("java.rmi.server.hostname", findLanAddress());
                         // Connect to the remote server using its address and port
                         ClientController ctrl = new ClientController(
                             opt.serverAddress, opt.port, opt.username, 0, window);
