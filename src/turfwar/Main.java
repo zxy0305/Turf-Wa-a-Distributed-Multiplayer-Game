@@ -83,14 +83,16 @@ public final class Main {
     }
 
     // Connects as a non-host player. If the server rejects the username, the start dialog is shown again
-    // (instead of exiting) so the user can try another name.
+    // (instead of exiting) so the user can try another name
     private static void joinFlow(MainWindow window, String address, int port, String name, boolean retrying) {
         try {
-            // the server calls back into this client, so advertise our LAN address, not whatever the OS hostname resolves to
+            // the server calls back into this client
             System.setProperty("java.rmi.server.hostname", findLanAddress());
+            // retryJoin() if the join is rejected
             ClientController ctrl = new ClientController(address, port, name, 0, window,
                 msg -> SwingUtilities.invokeLater(() -> retryJoin(window, address, port, name, msg)));
             window.setController(ctrl);
+
         } catch (Exception e) {
             String msg = "Could not connect to " + address + ":" + port + ":\n" + e.getMessage();
             if (retrying) { retryJoin(window, address, port, name, msg); return; }
@@ -120,6 +122,8 @@ public final class Main {
         try { return Integer.parseInt(s); } catch (NumberFormatException e) { return -1; }
     }
 
+    // Automatically determine the current computer's IPv4 address on the local area network (LAN);
+    // if it cannot be found, return 127.0.0.1
     private static String findLanAddress() {
         try {
             Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
